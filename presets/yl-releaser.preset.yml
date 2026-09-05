@@ -1,0 +1,2 @@
+name: 发布
+description: 纯发布角色：打 tag、部署、回滚（不合并 PR）

@@ -1,0 +1,9 @@
+# APCC 数字员工 SSH 签名公钥（allowed_signers 格式）
+# 用于 CI 提交审计：git verify-commit 校验 commit 的 SSH 签名
+# principal=email（<role>@yingloong.local），与 yl-commit 的 user.email 对齐
+yl-apcc@yingloong.local ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIED7WQGM+fBWr//Mez4DNTsz7akMPYvHUGZ3v7cj+MlI yl-apcc@yingloong.local
+yl-dev@yingloong.local ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEEs8CkRhIfTBlan6DXgUq0rKZGYCTZ1mqnleAVgEcnd yl-dev@yingloong.local
+yl-ops@yingloong.local ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII+Xdu8ZYV56hWYxda7q0kVbBgEfjr8HHH2guirzALoU yl-ops@yingloong.local
+yl-planner@yingloong.local ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGJrPiv2W5eIbFsP6rvDsaFzTTqkUIBMkdAhTL1ALolb yl-planner@yingloong.local
+yl-releaser@yingloong.local ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDS6A/cfLe2EEBUuMJIfsCAAOmd/fgKhC5T8Yrl7WdlO yl-releaser@yingloong.local
+yl-tester@yingloong.local ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJhvybvR7HxKfIk5LUWf7OgQi2lmijz5uuf9AG2a5ly1 yl-tester@yingloong.local

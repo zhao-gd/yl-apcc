@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# yl-commit — 数字员工 SSH 签名提交包装器
+#
+# 用法: yl-commit <账号> <title> [body]
+#   例: yl-commit yl-dev "feat(agent): #237 规范微调" "Refs: gitea issue #237"
+#
+# 自动带上: user.name / user.email / SSH 签名（gpg.format=ssh + ed25519 私钥）。
+# 私钥位置: /var/lib/yingloong/git-signing/<账号>/id_ed25519
+# 公钥已录入 Gitea 对应账号并标记 verified，Gitea 端可显示 verified 提交。
+#
+# 铁律: 数字员工禁止用 owner 身份 commit，一律经此包装器指定自己的账号。
+set -euo pipefail
+
+ACCOUNT="${1:?用法: yl-commit <账号> <title> [body]}"
+shift
+TITLE="${1:?用法: yl-commit <账号> <title> [body]}"
+shift || true
+BODY="${*:-}"
+
+# issue #2：密钥目录可用 YL_SIGN_DIR 覆盖（dev 机 ~/.ssh/yl-signing 等），默认生产路径不变
+SIGN_DIR="${YL_SIGN_DIR:-/var/lib/yingloong/git-signing}"
+KEY="${SIGN_DIR}/${ACCOUNT}/id_ed25519"
+
+if [ ! -f "$KEY" ]; then
+  echo "错误: 找不到 ${ACCOUNT} 的签名私钥 ${KEY}" >&2
+  echo "先运行: ssh-keygen -t ed25519 -f ${KEY} -N '' -C '${ACCOUNT}@yingloong.local'" >&2
+  echo "并把公钥 ${KEY}.pub 录入 Gitea ${ACCOUNT} 账号的 SSH Keys" >&2
+  exit 1
+fi
+
+if [ -n "$BODY" ]; then
+  git -c user.name="$ACCOUNT" \
+      -c user.email="$ACCOUNT@yingloong.local" \
+      -c gpg.format=ssh \
+      -c user.signingkey="$KEY" \
+      -c commit.gpgsign=true \
+      commit -m "$TITLE" -m "$BODY"
+else
+  git -c user.name="$ACCOUNT" \
+      -c user.email="$ACCOUNT@yingloong.local" \
+      -c gpg.format=ssh \
+      -c user.signingkey="$KEY" \
+      -c commit.gpgsign=true \
+      commit -m "$TITLE"
+fi

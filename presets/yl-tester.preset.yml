@@ -1,0 +1,2 @@
+name: 测试
+description: 验收 PR 并合并 main、跑测试、唯一关 issue 权

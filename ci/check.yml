@@ -1,0 +1,166 @@
+name: check
+
+# APCC 质量门禁（框架通用）：PR 合并到 main 前跑。
+# 硬门槛：目标分支=main + 无凭证泄漏 + Python 语法 + 提交审计（SSH 签名/身份白名单）。
+# 业务特定测试（分层 lint / tests / qa / 覆盖率）下沉到项目层 scripts/ci_project_tests.sh，
+# 由下方「项目测试」step 调用（无则跳过），实现框架/项目分层（EXPERIENCE-BOUNDARY.md §5）。
+# 说明：runner 为 self-hosted，job 容器 node:20-bookworm（自带 python3 + node 20，无 pip）。
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  branch-discipline:
+    name: branch-discipline
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 拉取 base 分支 + 确定 diff base
+        shell: bash
+        run: |
+          git fetch origin main
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "DIFF_BASE=HEAD~1" >> "$GITHUB_ENV"
+            echo "::notice::触发=push，diff base=HEAD~1（合并引入的改动）"
+          else
+            echo "DIFF_BASE=origin/main" >> "$GITHUB_ENV"
+            echo "::notice::触发=pull_request，diff base=origin/main"
+          fi
+
+      - name: 校验目标分支为 main
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            base="main"
+          else
+            base="${{ github.event.pull_request.base.ref }}"
+          fi
+          echo "目标分支: ${base}"
+          if [ "${base}" != "main" ]; then
+            echo "::error::目标分支必须为 main，当前为 ${base}"
+            exit 1
+          fi
+          echo "::notice::目标分支 = main"
+
+      - name: 提交审计（SSH 签名 + author 身份白名单）
+        # 同仓库 PR（数字员工）才审计；fork PR（外部贡献者）跳过——外部人免签名，合并 squash 重签
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.id == github.event.pull_request.base.repo.id }}
+        shell: bash
+        run: |
+          # 校验 PR 内 commit 均带有效 SSH 签名 + author ∈ 职能账号白名单（fail-closed）
+          git config gpg.ssh.allowedSignersFile "$(pwd)/ci/allowed_signers"
+          ALLOWED='^(yl-dev|yl-tester|yl-planner|yl-releaser|yl-ops|yl-apcc)$'
+          fail=0
+          for c in $(git log --format='%H' ${DIFF_BASE}...HEAD); do
+            author="$(git log -1 --format='%an' "$c")"
+            sig="$(git log -1 --format='%G?' "$c")"
+            if ! echo "$author" | grep -Eq "$ALLOWED"; then
+              echo "::error::commit ${c:0:8} author=$author 不在职能账号白名单"
+              fail=1
+            fi
+            if [ "$sig" != "G" ]; then
+              echo "::error::commit ${c:0:8} 无有效 SSH 签名（%G?=$sig，需为 G）"
+              fail=1
+            fi
+          done
+          if [ "$fail" != "0" ]; then
+            echo "::error::提交审计未通过（签名/身份）"
+            exit 1
+          fi
+          echo "::notice::提交审计通过（SSH 签名 + 身份白名单）"
+
+      - name: 扫描凭证泄漏
+        shell: bash
+        run: |
+          fail=0
+          changed_files="$(git diff --name-only ${DIFF_BASE}...HEAD)"
+
+          # 1) 敏感文件名（凭证档案 / 私钥 / 证书）
+          if echo "${changed_files}" | grep -Eqi '(credential|\.pem$|id_rsa|\.key$|\.pfx$|\.p12$)'; then
+            echo "::error::改动中疑似包含凭证/私钥文件"
+            echo "${changed_files}"
+            fail=1
+          fi
+
+          # 2) 新增/修改行中的凭证明文赋值形态（key=value），排除占位引用
+          #    词表（issue #1）：覆盖 token / app_token / secret_key / client_secret / bearer 等通用形态
+          CRED_PATTERN='(token|password|passwd|pwd|secret|secret[_-]?key|api[_-]?key|api[_-]?secret|access[_-]?token|app[_-]?token|api[_-]?token|refresh[_-]?token|auth[_-]?token|client[_-]?secret|bearer|authorization)[[:space:]]*[:=][[:space:]]*[^[:space:]]+'
+          leaks="$(git diff ${DIFF_BASE}...HEAD -- | grep -E '^\+' | grep -Ei "${CRED_PATTERN}" || true)"
+          leaks="$(printf '%s' "${leaks}" | grep -vE '^\+[[:space:]]*#' || true)"
+          leaks="$(printf '%s' "${leaks}" | grep -vE '[:=][[:space:]]*["]?\$\{' || true)"
+          leaks="$(printf '%s' "${leaks}" | grep -vE '[:=][[:space:]]*["]?<' || true)"
+          leaks="$(printf '%s' "${leaks}" | grep -vE '[:=][[:space:]]*["]?[a-zA-Z_][a-zA-Z0-9_.]*\(' || true)"
+          leaks="$(printf '%s' "${leaks}" | grep -vE '[:=][[:space:]]*["]?(true|false|0|1|yes|no)["]?($|[^[:alnum:]_])' || true)"
+          if [ -n "${leaks}" ]; then
+            echo "::error::改动中疑似包含凭证明文（key=value 形态）"
+            printf '%s\n' "${leaks}"
+            fail=1
+          fi
+
+          # 3) 回归自检（issue #1/#18）：词表必须能拦 APP_TOKEN 明文形态，防词表回退
+          if ! printf 'APP_%s = "%s"\n' TOKEN plaintext-secret-value | grep -Eqi "${CRED_PATTERN}"; then
+            echo "::error::凭证扫描词表回归失败：APP_TOKEN 形态未被拦截（词表被回退）"
+            exit 1
+          fi
+          echo "::notice::凭证扫描词表回归通过（APP_TOKEN 形态必拦）"
+
+          if [ "${fail}" != "0" ]; then
+            echo "::error::凭证泄漏检查未通过"
+            exit 1
+          fi
+          echo "::notice::未发现凭证泄漏"
+
+      - name: Python 语法检查
+        shell: bash
+        run: |
+          mapfile -t files < <(git diff --name-only ${DIFF_BASE}...HEAD -- '*.py')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::notice::无 Python 文件变更，跳过语法检查"
+          else
+            live=()
+            for f in "${files[@]}"; do [ -f "$f" ] && live+=("$f"); done
+            if [ "${#live[@]}" -eq 0 ]; then
+              echo "::notice::变更 Python 文件均已删除，跳过语法检查"
+            else
+              python3 -m py_compile "${live[@]}"
+              echo "::notice::语法检查通过（${#live[@]}/${#files[@]} 个文件）"
+            fi
+          fi
+
+      - name: 项目测试（项目层 ci_project_tests.sh，无则跳过）
+        shell: bash
+        run: |
+          if [ -f scripts/ci_project_tests.sh ]; then
+            bash scripts/ci_project_tests.sh
+            echo "::notice::项目测试通过"
+          else
+            echo "::notice::无项目层测试脚本，跳过"
+          fi
+
+      - name: 校验 commit 关联 issue（告警不阻断）
+        shell: bash
+        continue-on-error: true
+        run: |
+          msgs="$(git log --format='%B' ${DIFF_BASE}...HEAD 2>/dev/null || true)"
+          if echo "${msgs}" | grep -Eq '(gitea issue #[0-9]+|#[0-9]+|Refs:)'; then
+            echo "::notice::commit 已关联 issue"
+          else
+            echo "::warning::commit 未关联 issue（规范：Refs: gitea issue #N，不自动关闭）"
+          fi
+
+      - name: 证据汇总（Evidence Summary，自动贴 PR，供 tester 证据锚定）
+        shell: bash
+        run: |
+          echo "== 证据汇总（系统客观状态，CI 自动产出，非 LLM 声称）=="
+          echo "::notice::CI 运行证据：$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          echo "::notice::变更文件清单：$(git diff --name-only ${DIFF_BASE}...HEAD | tr '\n' ' ')"
+          echo "::notice::凭证/语法/提交审计/项目测试证据见上方各 step 输出"

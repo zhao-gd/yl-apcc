@@ -1,0 +1,13 @@
+# APCC 状态机 label 定义（install.sh 幂等创建到目标业务仓库）
+labels:
+  - {name: 讨论中,   color: 6a9955, description: 方案讨论阶段（planner 出方案 + dev/tester 挑战）}
+  - {name: 已定案,   color: 6a9955, description: 用户拍板定案，自动化起点}
+  - {name: 待测试,   color: 8f8f8f, description: dev 开发完提 PR，待 tester 验收}
+  - {name: 返工中,   color: 8f8f8f, description: tester 打回，待 dev 修改}
+  - {name: 返工1,    color: 8f8f8f, description: 第 1 轮返工}
+  - {name: 返工2,    color: 8f8f8f, description: 第 2 轮返工}
+  - {name: 返工3,    color: 8f8f8f, description: 第 3 轮返工（≥3 停自动）}
+  - {name: 需人工,   color: 8f8f8f, description: 返工超限或异常，需人工介入}
+  - {name: 完成,     color: 8f8f8f, description: tester 验收通过，合并 + 关 issue}
+  - {name: 暂不处理, color: 8f8f8f, description: 已知风险/低优先级，暂缓}
+  - {name: 待真机冒烟, color: 8f8f8f, description: 待用户真机手动冒烟}
